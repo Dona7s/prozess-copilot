@@ -49,7 +49,7 @@ cd prozess-copilot
 pip install -r requirements.txt
 
 export GEMINI_API_KEY="..."              # https://aistudio.google.com/apikey
-export GEMINI_MODEL="gemini-2.5-flash"   # optional, jedes aktuelle Gemini-Modell möglich
+export GEMINI_MODEL="gemini-3.8-flash"   # optional, jedes aktuelle Gemini-Modell möglich
 
 streamlit run app.py
 ```

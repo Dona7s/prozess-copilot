@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 from .schema import ProcessAnalysis, ProcessModel
 from .validate import validate
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
 EXTRACT_SYSTEM = """Du bist Experte für Geschäftsprozessmodellierung (BPMN 2.0).
 Der Nutzer beschreibt einen Prozess in natürlicher Sprache. Deine Aufgabe: die Prozessstruktur als JSON extrahieren.

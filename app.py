@@ -63,6 +63,9 @@ if run:
         st.error(str(e))
     except Exception as e:  # Netzwerk-/API-Fehler
         st.error(f"API-Fehler: {e}")
+        if "NOT_FOUND" in str(e) or "404" in str(e):
+            st.info("Das Modell ist offenbar nicht (mehr) verfügbar. Bitte in der Seitenleiste unter „Modell“ "
+                    "ein aktuelles Gemini-Modell eintragen, z. B. das in der Fehlermeldung empfohlene.")
 
 result = st.session_state.get("result")
 if not result:
