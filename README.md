@@ -70,6 +70,34 @@ Aus der Bestellabwicklung entwirft der Copilot u. a. eine automatische Bestandsp
 
 ![Soll-Prozess](docs/soll-prozess.png)
 
+## Evaluation: Wie zuverlässig ist die Übergabe Text → Struktur?
+
+Ein Testkorpus mit **12 deutschsprachigen Prozessbeschreibungen** aus verschiedenen Bereichen (Vertrieb, Personal, Finanzen, Bank, IT, Logistik, Gesundheit) liegt in [`eval/dataset.json`](eval/dataset.json). Zu jedem Fall ist die erwartete Struktur hinterlegt: Rollen, Aktivitäten, Anzahl der Entscheidungen (XOR) und paralleler Verzweigungen (AND). Darunter sind Fälle mit mehreren Entscheidungen, mit Schleifen (Nachforderung, erneute Bearbeitung) und mit Parallelität.
+
+Gemessen wird:
+
+| Kennzahl | Bedeutung |
+|---|---|
+| **First-Try-Validität** | Anteil der Antworten, die ohne Korrektur schema- *und* graphvalide sind |
+| **Validität nach Reparatur** | Anteil gültiger Modelle nach der Reparaturschleife |
+| **Ø Generierungen** | Wie viele LLM-Aufrufe im Schnitt nötig waren |
+| **Rollen (F1), Aktivitäten (Recall)** | Strukturelle Übereinstimmung mit der Erwartung, Namensabgleich über Wortstämme (z. B. „Bestand im Lager prüfen“ ≙ „Lagerbestand prüfen“) |
+| **Entscheidungen / Parallelität korrekt** | Stimmt die Anzahl der XOR- bzw. AND-Verzweigungen? |
+| **Fehlerarten** | Welche Validierungsfehler im ersten Versuch auftreten (Erreichbarkeit, fehlende Bedingungen, …) |
+
+```bash
+export GEMINI_API_KEY="..."
+python eval/run_eval.py --runs 3 --update-readme   # 3 Läufe je Fall, um die Streuung zu sehen
+```
+
+Rohdaten und Berichte landen in `eval/results/`, die Tabelle unten wird mit `--update-readme` automatisch ersetzt.
+
+### Ergebnisse
+
+<!-- EVAL:START -->
+*Noch nicht ausgeführt.* Ergebnisse erscheinen hier nach `python eval/run_eval.py --update-readme`.
+<!-- EVAL:END -->
+
 ## Tests
 
 ```bash
@@ -89,8 +117,13 @@ prozess-copilot/
 │   ├── validate.py         # Graphbasierte Prüfung des Prozessmodells
 │   ├── bpmn.py             # JSON → BPMN 2.0 XML inkl. Layout und Routing
 │   ├── compare.py          # Ist/Soll-Vergleich und Kennzahlen
+│   ├── evaluation.py       # Bewertung: Validität, Reparaturen, Strukturgenauigkeit
 │   ├── viewer.py           # bpmn-js-Einbettung mit Zoom und Vollbild
 │   └── demo.py             # Offline-Demo-Client und Beispieldaten
+├── eval/
+│   ├── dataset.json        # Testkorpus mit erwarteter Struktur
+│   ├── run_eval.py         # Evaluationsskript (CLI)
+│   └── results/            # Ergebnisse der Läufe
 ├── examples/
 │   └── bestellabwicklung.bpmn
 └── tests/
@@ -106,4 +139,4 @@ Python · Google Gemini API (`google-genai`) · Pydantic · Streamlit · bpmn-js
 - Weitere BPMN-Elemente (Zwischenereignisse, Nachrichtenflüsse, Subprozesse)
 - Diagramm iterativ per Chat bearbeiten („Füge eine Freigabe durch die Buchhaltung hinzu“)
 - Import bestehender `.bpmn`-Dateien zur Analyse
-- Evaluation der Extraktionsqualität über einen Testkorpus von Prozessbeschreibungen
+- Vergleich mehrerer Modelle und Prompt-Varianten in der Evaluation

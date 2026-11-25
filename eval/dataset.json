@@ -1,0 +1,125 @@
+{
+  "beschreibung": "Evaluationskorpus: deutschsprachige Prozessbeschreibungen mit erwarteter Struktur. 'lanes' und 'activities' sind Schlüsselbegriffe, Alternativen werden mit | getrennt. 'decisions' = Anzahl XOR-Verzweigungen, 'parallel' = Anzahl paralleler Verzweigungen.",
+  "cases": [
+    {
+      "id": "bestellung",
+      "domain": "Vertrieb",
+      "text": "Der Kunde gibt eine Bestellung auf. Der Vertrieb prüft den Lagerbestand. Ist die Ware vorrätig, versendet das Lager sie, andernfalls wird der Kunde benachrichtigt.",
+      "expected": {
+        "lanes": ["Kunde", "Vertrieb", "Lager"],
+        "activities": ["Bestellung aufgeben", "Lagerbestand prüfen", "Ware versenden", "Kunde benachrichtigen"],
+        "decisions": 1, "parallel": 0
+      }
+    },
+    {
+      "id": "urlaub",
+      "domain": "Personal",
+      "text": "Der Mitarbeiter stellt einen Urlaubsantrag im Portal. Der Teamleiter prüft den Antrag. Wenn er genehmigt wird, trägt die Personalabteilung den Urlaub ins System ein und der Mitarbeiter erhält eine Bestätigung. Wenn er abgelehnt wird, bekommt der Mitarbeiter eine Begründung per E-Mail.",
+      "expected": {
+        "lanes": ["Mitarbeiter", "Teamleiter|Teamleitung", "Personalabteilung|Personal|HR"],
+        "activities": ["Urlaubsantrag stellen", "Antrag prüfen", "Urlaub eintragen", "Bestätigung", "Begründung"],
+        "decisions": 1, "parallel": 0
+      }
+    },
+    {
+      "id": "rechnung",
+      "domain": "Finanzen",
+      "text": "Eine Rechnung geht per E-Mail in der Buchhaltung ein. Die Buchhaltung erfasst die Rechnung im ERP-System und gleicht sie mit der Bestellung ab. Stimmen Betrag und Bestellung nicht überein, fragt der Einkauf beim Lieferanten nach. Stimmen sie überein, prüft der Abteilungsleiter die Rechnung. Liegt der Betrag über 5.000 Euro, muss zusätzlich die Geschäftsführung die Rechnung freigeben. Nach der Freigabe veranlasst die Buchhaltung die Zahlung und archiviert die Rechnung.",
+      "expected": {
+        "lanes": ["Buchhaltung", "Einkauf", "Abteilungsleiter|Abteilungsleitung", "Geschäftsführung"],
+        "activities": ["Rechnung erfassen", "Bestellung abgleichen", "Lieferanten nachfragen", "Rechnung prüfen", "Rechnung freigeben", "Zahlung veranlassen", "Rechnung archivieren"],
+        "decisions": 2, "parallel": 0
+      }
+    },
+    {
+      "id": "onboarding",
+      "domain": "Personal",
+      "text": "Nach Vertragsunterzeichnung legt die Personalabteilung die Personalakte an. Anschließend richtet die IT gleichzeitig das Benutzerkonto ein und bereitet den Laptop vor, während die Führungskraft einen Einarbeitungsplan erstellt. Wenn alles erledigt ist, begrüßt die Führungskraft den neuen Mitarbeiter am ersten Arbeitstag.",
+      "expected": {
+        "lanes": ["Personalabteilung|Personal|HR", "IT", "Führungskraft"],
+        "activities": ["Personalakte anlegen", "Benutzerkonto einrichten", "Laptop vorbereiten", "Einarbeitungsplan erstellen", "Mitarbeiter begrüßen"],
+        "decisions": 0, "parallel": 1
+      }
+    },
+    {
+      "id": "reisekosten",
+      "domain": "Finanzen",
+      "text": "Der Mitarbeiter reicht nach der Dienstreise seine Reisekostenabrechnung mit Belegen ein. Die Reisekostenstelle prüft die Belege auf Vollständigkeit. Fehlen Belege, fordert sie diese beim Mitarbeiter nach und prüft erneut. Sind die Belege vollständig, wird die Abrechnung von der Buchhaltung erstattet.",
+      "expected": {
+        "lanes": ["Mitarbeiter", "Reisekostenstelle", "Buchhaltung"],
+        "activities": ["Reisekostenabrechnung einreichen", "Belege prüfen", "Belege nachfordern", "Abrechnung erstatten"],
+        "decisions": 1, "parallel": 0
+      }
+    },
+    {
+      "id": "kredit",
+      "domain": "Bank",
+      "text": "Ein Kunde stellt online einen Kreditantrag. Das System führt automatisch eine Bonitätsprüfung durch. Ist die Bonität unzureichend, wird der Antrag abgelehnt und der Kunde informiert. Ist sie ausreichend, prüft ein Kreditsachbearbeiter die Unterlagen. Bei Beträgen über 50.000 Euro entscheidet zusätzlich der Risikomanager. Bei Zustimmung erstellt der Sachbearbeiter den Kreditvertrag und sendet ihn dem Kunden zu.",
+      "expected": {
+        "lanes": ["Kunde", "System", "Sachbearbeiter|Kreditsachbearbeiter", "Risikomanager|Risikomanagement"],
+        "activities": ["Kreditantrag stellen", "Bonitätsprüfung", "Kunde informieren", "Unterlagen prüfen", "Kreditvertrag erstellen", "Vertrag senden"],
+        "decisions": 3, "parallel": 0
+      }
+    },
+    {
+      "id": "reklamation",
+      "domain": "Kundenservice",
+      "text": "Der Kunde meldet eine Reklamation beim Kundenservice. Der Kundenservice erfasst die Reklamation und leitet sie an die Qualitätssicherung weiter. Die Qualitätssicherung untersucht das Produkt. Liegt ein Garantiefall vor, schickt das Lager ein Ersatzprodukt. Liegt kein Garantiefall vor, erstellt der Kundenservice ein Angebot für eine kostenpflichtige Reparatur.",
+      "expected": {
+        "lanes": ["Kunde", "Kundenservice", "Qualitätssicherung", "Lager"],
+        "activities": ["Reklamation melden", "Reklamation erfassen", "Produkt untersuchen", "Ersatzprodukt schicken", "Angebot erstellen"],
+        "decisions": 1, "parallel": 0
+      }
+    },
+    {
+      "id": "bewerbung",
+      "domain": "Personal",
+      "text": "Ein Bewerber sendet seine Bewerbung über das Karriereportal. Die Personalabteilung sichtet die Unterlagen. Passt das Profil nicht, erhält der Bewerber eine Absage. Passt es, lädt die Fachabteilung den Bewerber zum Vorstellungsgespräch ein und führt es durch. Ist die Fachabteilung überzeugt, erstellt die Personalabteilung den Arbeitsvertrag, sonst erhält der Bewerber eine Absage.",
+      "expected": {
+        "lanes": ["Bewerber", "Personalabteilung|Personal|HR", "Fachabteilung"],
+        "activities": ["Bewerbung senden", "Unterlagen sichten", "Absage", "Vorstellungsgespräch einladen", "Vorstellungsgespräch führen", "Arbeitsvertrag erstellen"],
+        "decisions": 2, "parallel": 0
+      }
+    },
+    {
+      "id": "it_stoerung",
+      "domain": "IT",
+      "text": "Ein Anwender meldet eine Störung über das Ticketsystem. Der First-Level-Support versucht, das Problem zu lösen. Gelingt das nicht, eskaliert er das Ticket an den Second-Level-Support, der die Störung behebt. Anschließend bestätigt der Anwender, ob das Problem gelöst ist. Ist es nicht gelöst, wird das Ticket erneut bearbeitet, andernfalls wird es geschlossen.",
+      "expected": {
+        "lanes": ["Anwender", "First-Level|First Level", "Second-Level|Second Level"],
+        "activities": ["Störung melden", "Problem lösen", "Ticket eskalieren", "Störung beheben", "Lösung bestätigen", "Ticket schließen"],
+        "decisions": 2, "parallel": 0
+      }
+    },
+    {
+      "id": "wareneingang",
+      "domain": "Logistik",
+      "text": "Der Lieferant liefert die Ware an. Das Lager prüft die Lieferung anhand des Lieferscheins und kontrolliert die Qualität. Ist die Lieferung in Ordnung, bucht das Lager den Wareneingang und lagert die Ware ein. Bei Mängeln informiert der Einkauf den Lieferanten und veranlasst eine Rücksendung.",
+      "expected": {
+        "lanes": ["Lieferant", "Lager", "Einkauf"],
+        "activities": ["Ware liefern", "Lieferung prüfen", "Qualität kontrollieren", "Wareneingang buchen", "Ware einlagern", "Lieferanten informieren", "Rücksendung veranlassen"],
+        "decisions": 1, "parallel": 0
+      }
+    },
+    {
+      "id": "beschaffung",
+      "domain": "Einkauf",
+      "text": "Ein Mitarbeiter erstellt eine Bedarfsanforderung. Der Vorgesetzte genehmigt die Anforderung oder lehnt sie ab. Nach der Genehmigung holt der Einkauf drei Angebote ein, vergleicht sie und bestellt beim günstigsten Lieferanten. Gleichzeitig informiert der Einkauf die Buchhaltung über die erwarteten Kosten.",
+      "expected": {
+        "lanes": ["Mitarbeiter", "Vorgesetzter|Vorgesetzte", "Einkauf", "Buchhaltung"],
+        "activities": ["Bedarfsanforderung erstellen", "Anforderung genehmigen", "Angebote einholen", "Angebote vergleichen", "Bestellen", "Buchhaltung informieren"],
+        "decisions": 1, "parallel": 1
+      }
+    },
+    {
+      "id": "praxis",
+      "domain": "Gesundheit",
+      "text": "Ein Patient ruft in der Arztpraxis an und bittet um einen Termin. Die medizinische Fachangestellte prüft den Kalender. Ist es ein Notfall, wird der Patient sofort einbestellt. Andernfalls vergibt sie den nächsten freien Termin und schickt eine Terminbestätigung per SMS. Am Termin behandelt der Arzt den Patienten und die Fachangestellte rechnet die Leistung mit der Krankenkasse ab.",
+      "expected": {
+        "lanes": ["Patient", "Fachangestellte|MFA|Empfang", "Arzt|Ärztin"],
+        "activities": ["Termin anfragen", "Kalender prüfen", "Patient einbestellen", "Termin vergeben", "Terminbestätigung senden", "Patient behandeln", "Leistung abrechnen"],
+        "decisions": 1, "parallel": 0
+      }
+    }
+  ]
+}
