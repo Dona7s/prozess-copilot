@@ -10,7 +10,7 @@ import copy
 import json
 
 from .llm import REPAIR_MARKER
-from .schema import ProcessAnalysis, ProcessModel, ToBeProposal
+from .schema import EditProposal, ProcessAnalysis, ProcessModel, ToBeProposal
 
 EXAMPLE_TEXT = (
     "Der Kunde gibt eine Bestellung auf. Der Vertrieb prüft den Lagerbestand. "
@@ -151,6 +151,28 @@ EXAMPLE_TOBE = {
 }
 
 
+def _demo_edit(prompt: str) -> dict:
+    """Demo-Bearbeitung: fügt nach der Bestellung eine Auftragsbestätigung durch den Vertrieb ein.
+
+    Die eigentliche Anweisung wird im Demo-Modus ignoriert.
+    """
+    start = prompt.index("{")
+    end = prompt.rindex("Anweisung:")
+    model = json.loads(prompt[start:end].strip())
+    ids = {n["id"] for n in model["nodes"]}
+    if "task_confirm" in ids or "task_order" not in ids:
+        return {"summary": "Keine Änderung nötig (Demo-Modus).", "process": model}
+    for f in model["flows"]:
+        if f["source"] == "task_order":
+            nxt, f["target"] = f["target"], "task_confirm"
+            break
+    model["nodes"].insert(2, {"id": "task_confirm", "type": "userTask", "name": "Auftragsbestätigung senden",
+                              "lane": "lane_sales"})
+    model["flows"].append({"id": "f_confirm", "source": "task_confirm", "target": nxt, "label": ""})
+    return {"summary": "Nach „Bestellung aufgeben“ sendet der Vertrieb nun eine Auftragsbestätigung (Demo).",
+            "process": model}
+
+
 def _broken_first_attempt() -> dict:
     m = copy.deepcopy(EXAMPLE_MODEL)
     # ausgehender Fluss von „Kunden benachrichtigen“ fehlt
@@ -169,6 +191,8 @@ class DemoClient:
     def generate_json(self, system: str, prompt: str, schema) -> str:
         if schema is ProcessAnalysis:
             return json.dumps(EXAMPLE_ANALYSIS, ensure_ascii=False)
+        if schema is EditProposal:
+            return json.dumps(_demo_edit(prompt), ensure_ascii=False)
         if schema is ToBeProposal:
             return json.dumps(EXAMPLE_TOBE, ensure_ascii=False)
         if schema is ProcessModel:

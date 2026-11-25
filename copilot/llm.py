@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ValidationError
 
-from .schema import Change, ProcessAnalysis, ProcessModel, ToBeProposal
+from .schema import Change, EditProposal, ProcessAnalysis, ProcessModel, ToBeProposal
 from .validate import validate
 
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
@@ -72,6 +72,17 @@ Entwirf daraus einen realistischen, verbesserten Soll-Prozess (To-Be):
   aus Aufgaben genau ein ausgehender Fluss, Verzweigungen nur über Gateways, XOR-Ausgänge mit Bedingung.
 - Erfinde keine Rollen oder Systeme ohne Not; der Soll-Prozess soll umsetzbar bleiben.
 Fasse in changes die wichtigsten Änderungen zusammen. Antworte in der Sprache des Nutzers."""
+
+
+EDIT_SYSTEM = """Du bearbeitest ein bestehendes BPMN-Prozessmodell (JSON) nach einer Anweisung des Nutzers.
+- Setze genau die gewünschte Änderung um (z. B. Schritt einfügen, entfernen, umbenennen, Rolle ändern,
+  Entscheidung oder Parallelität ergänzen) und passe die Flüsse so an, dass der Prozess schlüssig bleibt.
+- Alles andere bleibt unverändert: gleiche IDs, Namen, Lanes und Reihenfolge für nicht betroffene Elemente.
+- Neue Elemente erhalten neue, eindeutige IDs. Neue Rollen werden als neue Lane angelegt.
+- Es gelten die bekannten Modellierungsregeln: genau ein startEvent, jeder Pfad endet in einem endEvent,
+  aus Aufgaben genau ein ausgehender Fluss, Verzweigungen nur über Gateways, XOR-Ausgänge mit Bedingung.
+- Ist die Anweisung unklar oder fachlich nicht sinnvoll, gib das Modell unverändert zurück und erkläre in summary, warum.
+Antworte in der Sprache des Nutzers."""
 
 
 class LLMError(RuntimeError):
@@ -189,3 +200,16 @@ def propose_to_be(client, model: ProcessModel, analysis: ProcessAnalysis, text: 
     parsed, res = _generate_validated(client, TOBE_SYSTEM, prompt, task, ToBeProposal, lambda p: p.process, max_repairs)
     return ToBeResult(model=res.model, errors=res.errors, attempts=res.attempts,
                       changes=parsed.changes if parsed else [])
+
+
+@dataclass
+class EditResult(ExtractionResult):
+    summary: str = ""
+
+
+def edit_process(client, model: ProcessModel, instruction: str, max_repairs: int = 3) -> EditResult:
+    """Bestehendes Modell per natürlichsprachlicher Anweisung ändern (validiert, mit Reparaturschleife)."""
+    prompt = f"Aktuelles Prozessmodell (JSON):\n{_model_json(model)}\n\nAnweisung:\n\"\"\"{instruction}\"\"\""
+    parsed, res = _generate_validated(client, EDIT_SYSTEM, prompt, prompt, EditProposal, lambda p: p.process, max_repairs)
+    return EditResult(model=res.model, errors=res.errors, attempts=res.attempts,
+                      summary=parsed.summary if parsed else "")

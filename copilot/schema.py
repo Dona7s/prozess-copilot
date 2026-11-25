@@ -97,3 +97,11 @@ class Change(BaseModel):
 class ToBeProposal(BaseModel):
     changes: list[Change] = Field(description="Die wichtigsten Änderungen gegenüber dem Ist-Prozess (3–6 Punkte)")
     process: ProcessModel = Field(description="Der vollständige verbesserte Soll-Prozess")
+
+
+# ---------------------------------------------------------------- Bearbeitung per Chat
+
+class EditProposal(BaseModel):
+    summary: str = Field(description="Kurze Beschreibung der vorgenommenen Änderung (1–2 Sätze). "
+                                     "Falls die Anweisung unklar oder nicht umsetzbar war: Begründung, Modell unverändert.")
+    process: ProcessModel = Field(description="Das vollständige Prozessmodell nach der Änderung")

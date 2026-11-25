@@ -37,12 +37,14 @@ flowchart LR
 | 4 | **JSON → BPMN 2.0 XML** inkl. automatischem Layout (BPMNDI) | Deterministischer Python-Code, **kein LLM** | `copilot/bpmn.py` |
 | 5 | **Darstellung & Export** – interaktives Diagramm mit Zoom, „Einpassen“ und Vollbild; Download als `.bpmn` (Camunda, Signavio, bpmn.io) und JSON | bpmn-js | `copilot/viewer.py` |
 | 6 | **Analyse** – Engpässe, unnötige Übergaben, Wartezeiten sowie Automatisierungspotenziale (RPA / API / KI) | Zweiter Gemini-Aufruf, ebenfalls schema-gebunden | `analyze_process()` |
+| 6a | **Bearbeitung per Chat** – Diagramm mit Anweisungen in natürlicher Sprache ändern („Füge eine Freigabe durch die Buchhaltung hinzu“), inkl. Verlauf, Änderungsübersicht und Rückgängig | Gemini liefert das vollständige geänderte Modell, das dieselbe Validierung und Reparaturschleife durchläuft; Unterschiede berechnet Python | `edit_process()` |
 | 7 | **Soll-Prozess (To-Be)** – verbesserter Prozess auf Basis der Analyse, mit Änderungsübersicht; Ist und Soll in Tabs bzw. nebeneinander, neue Elemente hervorgehoben | Dritter Gemini-Aufruf mit derselben Validierung und Reparaturschleife; Kennzahlenvergleich in Python | `propose_to_be()`, `copilot/compare.py` |
 
 ## Designentscheidungen
 
 - **Das LLM erzeugt nur Struktur, nie XML.** BPMN-XML ist umfangreich und fehleranfällig. Das Modell liefert ein schlankes, schema-gebundenes JSON; die Übersetzung in BPMN übernimmt deterministischer Code. Das Ergebnis ist dadurch immer syntaktisch gültig und reproduzierbar.
 - **Zuverlässige Übergabe durch Structured Output und Validierung.** Das Pydantic-Schema wird als JSON-Schema an Gemini übergeben und die Antwort mit demselben Schema geprüft. Zusätzlich prüft eine Graphanalyse die *fachliche* Korrektheit des Prozesses. Die Fehlermeldungen sind so formuliert, dass das Modell sie direkt zur Selbstkorrektur nutzen kann.
+- **Bearbeiten durch Neugenerierung statt fragiler Patches.** Für Chat-Änderungen gibt das Modell das komplette geänderte JSON zurück (mit der Vorgabe, IDs unveränderter Elemente beizubehalten). Das ist robuster als JSON-Patches mit Pfadangaben, und das Ergebnis lässt sich vollständig validieren. Welche Elemente tatsächlich neu sind oder entfallen, zeigt ein deterministischer Vergleich.
 - **Ein Validierungspfad für Ist und Soll.** Der Soll-Prozess nutzt dasselbe Schema, dieselbe Graphprüfung und dieselbe Reparaturschleife wie die Extraktion. Ein „verbesserter“ Prozess mit Sackgassen kann so nicht entstehen.
 - **Fakten statt LLM-Behauptungen beim Vergleich.** Die Änderungsübersicht formuliert das Modell, die Kennzahlen (manuelle vs. automatisierte Aufgaben, manuelle Übergaben zwischen Rollen, neue und entfallene Elemente) berechnet dagegen deterministischer Code aus beiden Modellen.
 - **Schutz vor Halluzinationen in der Analyse.** Verweise des Modells auf nicht existierende Elemente werden automatisch entfernt.
@@ -119,7 +121,8 @@ prozess-copilot/
 │   ├── compare.py          # Ist/Soll-Vergleich und Kennzahlen
 │   ├── evaluation.py       # Bewertung: Validität, Reparaturen, Strukturgenauigkeit
 │   ├── viewer.py           # bpmn-js-Einbettung mit Zoom und Vollbild
-│   └── demo.py             # Offline-Demo-Client und Beispieldaten
+│   ├── demo.py             # Offline-Demo-Client und Beispieldaten
+│   └── documents.py        # Textextraktion aus PDF, Word und Text
 ├── eval/
 │   ├── dataset.json        # Testkorpus mit erwarteter Struktur
 │   ├── run_eval.py         # Evaluationsskript (CLI)
@@ -139,6 +142,5 @@ Python · Google Gemini API (`google-genai`) · Pydantic · Streamlit · bpmn-js
 ## Ausblick
 
 - Weitere BPMN-Elemente (Zwischenereignisse, Nachrichtenflüsse, Subprozesse)
-- Diagramm iterativ per Chat bearbeiten („Füge eine Freigabe durch die Buchhaltung hinzu“)
 - Import bestehender `.bpmn`-Dateien zur Analyse
 - Vergleich mehrerer Modelle und Prompt-Varianten in der Evaluation

@@ -13,7 +13,15 @@ from copilot.bpmn import safe_id, to_bpmn_xml
 from copilot.demo import EXAMPLE_TEXT, DemoClient
 from copilot.documents import SUPPORTED, DocumentError, extract_text
 from copilot.compare import compare
-from copilot.llm import DEFAULT_MODEL, GeminiClient, LLMError, analyze_process, extract_process, propose_to_be
+from copilot.llm import (
+    DEFAULT_MODEL,
+    GeminiClient,
+    LLMError,
+    analyze_process,
+    edit_process,
+    extract_process,
+    propose_to_be,
+)
 from copilot.schema import ProcessModel
 from copilot.viewer import viewer_html
 
@@ -93,7 +101,7 @@ if col_b.button("Beispiel einfügen"):
 
 if run:
     st.session_state["text"] = text
-    for k in ("result", "analysis", "tobe"):
+    for k in ("result", "analysis", "tobe", "edits", "undo"):
         st.session_state.pop(k, None)
     try:
         client = get_client()
@@ -161,6 +169,58 @@ st.subheader(f"Ist-Prozess: {model.name}")
 diagram(model, marks, "ist", diagram_h)
 legend = "🟧 Schwachstelle · 🟩 Automatisierungspotenzial · 🟪 beides · " if analysis else ""
 st.caption(legend + "Die `.bpmn`-Datei lässt sich in Camunda Modeler, Signavio oder bpmn.io öffnen.")
+
+# ---------------------------------------------------------------- Bearbeitung per Chat
+with st.expander("✏️ Diagramm per Chat bearbeiten", expanded=bool(st.session_state.get("edits"))):
+    st.caption("Beschreiben Sie die Änderung in eigenen Worten, z. B. „Füge nach der Prüfung eine Freigabe durch "
+               "die Buchhaltung hinzu“ oder „Benenne ‚Ware versenden‘ in ‚Ware kommissionieren und versenden‘ um“. "
+               "Das geänderte Modell wird wie jedes andere validiert und bei Bedarf repariert.")
+    for e in st.session_state.get("edits", []):
+        with st.chat_message("user"):
+            st.write(e["instruction"])
+        with st.chat_message("assistant"):
+            st.write(e["summary"] or "Änderung übernommen.")
+            if e["added"] or e["removed"]:
+                st.caption(" · ".join(
+                    (["Neu: " + ", ".join(e["added"])] if e["added"] else [])
+                    + (["Entfallen: " + ", ".join(e["removed"])] if e["removed"] else [])
+                ))
+            if e["failed"]:
+                st.caption("⚠️ Ergebnis war nach allen Reparaturversuchen ungültig und wurde verworfen.")
+
+    with st.form("edit_form", clear_on_submit=True):
+        instruction = st.text_input("Änderung", placeholder="Was soll am Diagramm geändert werden?",
+                                    label_visibility="collapsed")
+        f1, f2 = st.columns([1, 1])
+        apply = f1.form_submit_button("Änderung anwenden", type="primary", width="stretch")
+        undo = f2.form_submit_button("↩ Letzte Änderung rückgängig", width="stretch",
+                                     disabled=not st.session_state.get("undo"))
+    if apply and instruction.strip():
+        try:
+            with st.spinner("Änderung wird umgesetzt …"):
+                edit = edit_process(st.session_state["client"], model, instruction.strip(), max_repairs=max_repairs)
+            entry = {"instruction": instruction.strip(), "summary": edit.summary, "added": [], "removed": [],
+                     "failed": not edit.ok}
+            if edit.ok:
+                diff = compare(model, edit.model)
+                entry["added"], entry["removed"] = diff.added, diff.removed
+                st.session_state.setdefault("undo", []).append(model)
+                result.model = edit.model
+                # Analyse und Soll-Prozess beziehen sich auf das alte Modell
+                for k in ("analysis", "tobe"):
+                    st.session_state.pop(k, None)
+            st.session_state.setdefault("edits", []).append(entry)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Fehler bei der Bearbeitung: {e}")
+    if undo and st.session_state.get("undo"):
+        result.model = st.session_state["undo"].pop()
+        st.session_state.setdefault("edits", []).append(
+            {"instruction": "Rückgängig", "summary": "Letzte Änderung wurde rückgängig gemacht.",
+             "added": [], "removed": [], "failed": False})
+        for k in ("analysis", "tobe"):
+            st.session_state.pop(k, None)
+        st.rerun()
 
 # ---------------------------------------------------------------- 6. Analyse
 st.subheader("Analyse")

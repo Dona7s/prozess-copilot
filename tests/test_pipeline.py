@@ -289,3 +289,63 @@ def test_viewer_has_zoom_controls_and_min_zoom():
     html = viewer_html("<x/>", height=700, min_zoom=0)
     for el in ('id="zin"', 'id="zout"', 'id="zfit"', 'id="zfull"', "height:700px", "const MIN_ZOOM = 0;"):
         assert el in html
+
+
+# ---------------------------------------------------------------- Bearbeitung per Chat
+
+def test_edit_process_with_demo_client():
+    from copilot.compare import compare
+    from copilot.llm import edit_process
+
+    client = DemoClient()
+    m = extract_process(client, EXAMPLE_TEXT).model
+    res = edit_process(client, m, "Füge nach der Bestellung eine Auftragsbestätigung hinzu")
+    assert res.ok and "Auftragsbestätigung" in res.summary
+    diff = compare(m, res.model)
+    assert diff.added == ["Auftragsbestätigung senden"] and diff.removed == []
+    # unveränderte Elemente behalten ihre IDs
+    assert {n.id for n in m.nodes} <= {n.id for n in res.model.nodes}
+
+
+def test_edit_process_repairs_invalid_edit():
+    import json as _json
+
+    from copilot.llm import REPAIR_MARKER, edit_process
+    from copilot.schema import EditProposal
+
+    class SloppyEditor(DemoClient):
+        def generate_json(self, system, prompt, schema):
+            if schema is EditProposal:
+                d = copy.deepcopy(EXAMPLE_MODEL)
+                d["nodes"].append({"id": "task_new", "type": "task", "name": "Rechnung senden", "lane": "lane_sales"})
+                if REPAIR_MARKER in prompt:  # zweiter Versuch: korrekt eingebunden
+                    for f in d["flows"]:
+                        if f["id"] == "f6":
+                            f["target"] = "task_new"
+                    d["flows"].append({"id": "f_new", "source": "task_new", "target": "end_shipped", "label": ""})
+                return _json.dumps({"summary": "Rechnung ergänzt.", "process": d})
+            return super().generate_json(system, prompt, schema)
+
+    client = SloppyEditor()
+    m = extract_process(client, EXAMPLE_TEXT).model
+    res = edit_process(client, m, "Nach dem Versand eine Rechnung senden")
+    assert res.ok and len(res.attempts) == 2
+    assert any("task_new" in e for e in res.attempts[0]["errors"])
+
+
+def test_edit_prompt_contains_model_and_instruction():
+    from copilot.llm import edit_process
+    from copilot.schema import EditProposal
+
+    seen = {}
+
+    class Spy(DemoClient):
+        def generate_json(self, system, prompt, schema):
+            if schema is EditProposal:
+                seen["prompt"] = prompt
+            return super().generate_json(system, prompt, schema)
+
+    client = Spy(simulate_repair=False)
+    m = extract_process(client, EXAMPLE_TEXT).model
+    edit_process(client, m, "Lager in Logistik umbenennen")
+    assert "Lager in Logistik umbenennen" in seen["prompt"] and '"task_check_stock"' in seen["prompt"]
