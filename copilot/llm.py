@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ValidationError
 
-from .schema import ProcessAnalysis, ProcessModel
+from .schema import Change, ProcessAnalysis, ProcessModel, ToBeProposal
 from .validate import validate
 
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
@@ -35,8 +35,8 @@ REPAIR_MARKER = "Gefundene Fehler:"
 
 REPAIR_TEMPLATE = """Das Prozessmodell aus deiner letzten Antwort hat die Prüfung nicht bestanden.
 
-Ursprünglicher Text:
-\"\"\"{text}\"\"\"
+Ursprüngliche Aufgabe:
+{task}
 
 Bisheriges JSON:
 {prev}
@@ -58,6 +58,20 @@ Du erhältst ein BPMN-Prozessmodell als JSON. Analysiere es:
    - API: direkte Systemintegration (z. B. automatische Bestandsabfrage).
    - AI: Texte/Dokumente verstehen, klassifizieren, Antworten formulieren, Entscheidungen unterstützen.
 Verweise nur auf IDs, die im Modell existieren. Sei konkret und praxisnah. Antworte in der Sprache des Nutzers."""
+
+
+TOBE_SYSTEM = """Du bist Berater für Prozessoptimierung (Lean, BPM, Automatisierung) und modellierst in BPMN 2.0.
+Du erhältst einen Ist-Prozess als JSON sowie eine Analyse mit Schwachstellen und Automatisierungspotenzialen.
+Entwirf daraus einen realistischen, verbesserten Soll-Prozess (To-Be):
+- Behebe die genannten Schwachstellen (z. B. Sackgassen schließen, unnötige Übergaben vermeiden, Wartezeiten verkürzen).
+- Setze sinnvolle Automatisierungen um: automatisierte Schritte werden serviceTask, z. B. „Bestand per ERP-API prüfen“.
+  Technologie (RPA/API/KI) gern im Namen kenntlich machen.
+- Unabhängige Schritte dürfen mit parallelGateway parallelisiert werden.
+- Behalte bestehende IDs für unveränderte Elemente bei; neue Elemente erhalten neue IDs.
+- Es gelten dieselben Modellierungsregeln wie beim Ist-Prozess: genau ein startEvent, jeder Pfad endet in einem endEvent,
+  aus Aufgaben genau ein ausgehender Fluss, Verzweigungen nur über Gateways, XOR-Ausgänge mit Bedingung.
+- Erfinde keine Rollen oder Systeme ohne Not; der Soll-Prozess soll umsetzbar bleiben.
+Fasse in changes die wichtigsten Änderungen zusammen. Antworte in der Sprache des Nutzers."""
 
 
 class LLMError(RuntimeError):
@@ -104,37 +118,49 @@ class GeminiClient:
         return resp.text
 
 
-def extract_process(client, text: str, max_repairs: int = 3) -> ExtractionResult:
-    """Text → ProcessModel. Bei Validierungsfehlern wird das Modell zur Korrektur aufgefordert."""
-    prompt = f"Prozessbeschreibung:\n\"\"\"{text}\"\"\""
+def _generate_validated(client, system: str, prompt: str, task: str, schema: type[BaseModel],
+                        get_process, max_repairs: int):
+    """Generiert schema-gebundenes JSON und repariert es, bis das Prozessmodell gültig ist.
+
+    get_process: holt das ProcessModel aus dem geparsten Schema-Objekt.
+    Rückgabe: (letztes geparstes Objekt oder None, ExtractionResult)
+    """
     attempts: list[dict] = []
+    parsed = None
     model: ProcessModel | None = None
     errors: list[str] = []
-
     for _ in range(max_repairs + 1):
-        raw = client.generate_json(EXTRACT_SYSTEM, prompt, ProcessModel)
+        raw = client.generate_json(system, prompt, schema)
         try:
-            model = ProcessModel.model_validate_json(raw)
+            parsed = schema.model_validate_json(raw)
+            model = get_process(parsed)
             errors = validate(model)
         except ValidationError as e:
-            model = None
+            parsed, model = None, None
             errors = [f"JSON entspricht nicht dem Schema: {err['loc']}: {err['msg']}" for err in e.errors()]
         attempts.append({"json": raw, "errors": errors})
         if model is not None and not errors:
             break
-        prompt = REPAIR_TEMPLATE.format(
-            text=text,
-            prev=raw,
-            errors="\n".join(f"- {e}" for e in errors),
-        )
-    return ExtractionResult(model=model, errors=errors, attempts=attempts)
+        prompt = REPAIR_TEMPLATE.format(task=task, prev=raw, errors="\n".join(f"- {e}" for e in errors))
+    return parsed, ExtractionResult(model=model, errors=errors, attempts=attempts)
+
+
+def extract_process(client, text: str, max_repairs: int = 3) -> ExtractionResult:
+    """Text → ProcessModel. Bei Validierungsfehlern wird das Modell zur Korrektur aufgefordert."""
+    prompt = f"Prozessbeschreibung:\n\"\"\"{text}\"\"\""
+    _, result = _generate_validated(client, EXTRACT_SYSTEM, prompt, prompt, ProcessModel, lambda m: m, max_repairs)
+    return result
+
+
+def _model_json(model: ProcessModel) -> str:
+    return json.dumps(model.model_dump(mode="json"), ensure_ascii=False, indent=2)
 
 
 def analyze_process(client, model: ProcessModel, text: str = "") -> ProcessAnalysis:
     prompt = (
         (f"Ursprüngliche Beschreibung:\n\"\"\"{text}\"\"\"\n\n" if text else "")
         + "Prozessmodell (JSON):\n"
-        + json.dumps(model.model_dump(mode="json"), ensure_ascii=False, indent=2)
+        + _model_json(model)
     )
     raw = client.generate_json(ANALYSIS_SYSTEM, prompt, ProcessAnalysis)
     analysis = ProcessAnalysis.model_validate_json(raw)
@@ -144,3 +170,22 @@ def analyze_process(client, model: ProcessModel, text: str = "") -> ProcessAnaly
         w.node_ids = [i for i in w.node_ids if i in ids]
     analysis.automations = [a for a in analysis.automations if a.node_id in ids]
     return analysis
+
+
+@dataclass
+class ToBeResult(ExtractionResult):
+    changes: list[Change] = field(default_factory=list)
+
+
+def propose_to_be(client, model: ProcessModel, analysis: ProcessAnalysis, text: str = "",
+                  max_repairs: int = 3) -> ToBeResult:
+    """Ist-Prozess + Analyse → verbesserter Soll-Prozess (gleiches Schema, gleiche Validierung)."""
+    prompt = (
+        (f"Ursprüngliche Beschreibung:\n\"\"\"{text}\"\"\"\n\n" if text else "")
+        + "Ist-Prozess (JSON):\n" + _model_json(model)
+        + "\n\nAnalyse (JSON):\n" + json.dumps(analysis.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    )
+    task = "Entwirf einen verbesserten Soll-Prozess auf Basis von Ist-Prozess und Analyse.\n\n" + prompt
+    parsed, res = _generate_validated(client, TOBE_SYSTEM, prompt, task, ToBeProposal, lambda p: p.process, max_repairs)
+    return ToBeResult(model=res.model, errors=res.errors, attempts=res.attempts,
+                      changes=parsed.changes if parsed else [])

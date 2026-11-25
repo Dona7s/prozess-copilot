@@ -220,3 +220,72 @@ def test_edges_do_not_cross_shapes_or_overlap(model_dict):
             if oid == fid or osrc == src or otgt == tgt:
                 continue
             assert not any(_collinear_overlap(s, o) for s in segs for o in zip(opts, opts[1:])), f"{fid} überdeckt {oid}"
+
+
+# ---------------------------------------------------------------- Soll-Prozess (To-Be)
+
+def test_to_be_pipeline_with_demo_client():
+    from copilot.compare import compare
+    from copilot.llm import propose_to_be
+
+    client = DemoClient()
+    ist = extract_process(client, EXAMPLE_TEXT).model
+    analysis = analyze_process(client, ist)
+    tobe = propose_to_be(client, ist, analysis, EXAMPLE_TEXT)
+    assert tobe.ok and tobe.changes
+    ET.fromstring(to_bpmn_xml(tobe.model))  # erzeugt gültiges XML
+
+    cmp = compare(ist, tobe.model)
+    metrics = {m.name: m for m in cmp.metrics}
+    assert metrics["Automatisierte Aufgaben (serviceTask)"].delta == 3
+    assert metrics["Manuelle Aufgaben"].delta == -1
+    assert "Bestand per ERP-API prüfen" in cmp.added
+    assert "Kunden benachrichtigen" in cmp.removed
+    assert "task_check_api" in cmp.new_ids and "task_order" not in cmp.new_ids
+
+
+def test_to_be_repair_loop_and_prompt_contains_analysis():
+    import json as _json
+
+    from copilot.demo import EXAMPLE_TOBE
+    from copilot.llm import REPAIR_MARKER, propose_to_be
+    from copilot.schema import ToBeProposal
+
+    prompts = []
+
+    class FlakyToBe(DemoClient):
+        def generate_json(self, system, prompt, schema):
+            if schema is ToBeProposal:
+                prompts.append(prompt)
+                d = copy.deepcopy(EXAMPLE_TOBE)
+                if REPAIR_MARKER not in prompt:  # erster Versuch: Sackgasse
+                    d["process"]["flows"] = [f for f in d["process"]["flows"] if f["id"] != "f11"]
+                return _json.dumps(d)
+            return super().generate_json(system, prompt, schema)
+
+    client = FlakyToBe(simulate_repair=False)
+    ist = extract_process(client, EXAMPLE_TEXT).model
+    analysis = analyze_process(client, ist)
+    res = propose_to_be(client, ist, analysis)
+    assert res.ok and len(res.attempts) == 2
+    assert "Manuelle Bestandsprüfung" in prompts[0]  # Analyse fließt in den Prompt ein
+    assert "end_declined" in prompts[1]  # Fehlerliste wird zurückgegeben
+
+
+def test_compare_handoffs_ignore_automated_steps():
+    from copilot.compare import compare
+
+    d = copy.deepcopy(EXAMPLE_MODEL)
+    m = _model(d)
+    cmp = compare(m, m)
+    assert all(x.delta == 0 for x in cmp.metrics)
+    assert cmp.added == [] and cmp.removed == []
+    assert {x.name: x.ist for x in cmp.metrics}["Manuelle Übergaben zwischen Rollen"] == 2
+
+
+def test_viewer_has_zoom_controls_and_min_zoom():
+    from copilot.viewer import viewer_html
+
+    html = viewer_html("<x/>", height=700, min_zoom=0)
+    for el in ('id="zin"', 'id="zout"', 'id="zfit"', 'id="zfull"', "height:700px", "const MIN_ZOOM = 0;"):
+        assert el in html

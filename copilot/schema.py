@@ -84,3 +84,16 @@ class ProcessAnalysis(BaseModel):
     summary: str = Field(description="Kurzes Fazit zum Prozess in 2–3 Sätzen")
     weaknesses: list[Weakness]
     automations: list[Automation]
+
+
+# ---------------------------------------------------------------- Soll-Prozess (To-Be)
+
+class Change(BaseModel):
+    title: str = Field(description="Kurzer Titel der Änderung")
+    description: str = Field(description="Was wurde geändert und warum")
+    addresses: str = Field(default="", description="Welche Schwachstelle oder welches Automatisierungspotenzial damit adressiert wird")
+
+
+class ToBeProposal(BaseModel):
+    changes: list[Change] = Field(description="Die wichtigsten Änderungen gegenüber dem Ist-Prozess (3–6 Punkte)")
+    process: ProcessModel = Field(description="Der vollständige verbesserte Soll-Prozess")
