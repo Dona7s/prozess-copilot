@@ -17,7 +17,7 @@ import unicodedata
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 
-from .llm import extract_process
+from .llm import extract_json_text, extract_process
 from .schema import NodeType, ProcessModel
 
 STEM_LEN = 5
@@ -111,6 +111,7 @@ def score_structure(model: ProcessModel, expected: dict) -> StructureScore:
 # ---------------------------------------------------------------- Fehlerkategorien
 
 ERROR_CATEGORIES = [  # Reihenfolge = Priorität (spezifisch vor allgemein)
+    ("JSON-Syntax", r"kein gültiges JSON"),
     ("Schema", r"entspricht nicht dem Schema"),
     ("Doppelte ID", r"mehrfach verwendet|leerer ID"),
     ("Ungültige Referenz", r"existiert nicht|nicht existierende Lane"),
@@ -140,22 +141,46 @@ class CaseResult:
     attempts: int
     seconds: float
     first_errors: list[str] = field(default_factory=list)
-    score: dict | None = None  # StructureScore als dict + total
+    score: dict | None = None  # StructureScore als dict + total (nur für gültige Endergebnisse)
     exception: str = ""
+    mode: str = "schema+repair"
+    first_seconds: float = 0.0  # Dauer des ersten Aufrufs
+    first_score: dict | None = None  # Struktur des ersten Versuchs, falls dieser gültig war
 
 
-def evaluate_case(client, case: dict, run: int = 1, max_repairs: int = 3) -> CaseResult:
+def _score_dict(model: ProcessModel, expected: dict) -> dict:
+    s = score_structure(model, expected)
+    return asdict(s) | {"lane_f1": s.lane_f1, "total": s.total}
+
+
+class _TimedClient:
+    """Misst die Dauer jedes einzelnen LLM-Aufrufs."""
+
+    def __init__(self, inner):
+        self.inner, self.durations = inner, []
+
+    def generate_json(self, *args):
+        t0 = time.perf_counter()
+        try:
+            return self.inner.generate_json(*args)
+        finally:
+            self.durations.append(time.perf_counter() - t0)
+
+
+def evaluate_case(client, case: dict, run: int = 1, max_repairs: int = 3, mode: str = "schema+repair") -> CaseResult:
+    timed = _TimedClient(client)
     t0 = time.perf_counter()
     try:
-        res = extract_process(client, case["text"], max_repairs=max_repairs)
+        res = extract_process(timed, case["text"], max_repairs=max_repairs)
     except Exception as e:  # API-Fehler zählen als ungültig, Lauf geht weiter
-        return CaseResult(case["id"], run, False, False, 0, time.perf_counter() - t0, exception=str(e)[:300])
+        return CaseResult(case["id"], run, False, False, 0, time.perf_counter() - t0, exception=str(e)[:300],
+                          mode=mode)
     dt = time.perf_counter() - t0
     first_errors = res.attempts[0]["errors"] if res.attempts else []
-    score = None
-    if res.model is not None:
-        s = score_structure(res.model, case["expected"])
-        score = asdict(s) | {"lane_f1": s.lane_f1, "total": s.total}
+    first_score = None
+    if not first_errors:
+        first = ProcessModel.model_validate_json(extract_json_text(res.attempts[0]["json"]))
+        first_score = _score_dict(first, case["expected"])
     return CaseResult(
         case_id=case["id"],
         run=run,
@@ -164,7 +189,20 @@ def evaluate_case(client, case: dict, run: int = 1, max_repairs: int = 3) -> Cas
         attempts=len(res.attempts),
         seconds=dt,
         first_errors=first_errors,
-        score=score,
+        score=_score_dict(res.model, case["expected"]) if res.ok else None,
+        mode=mode,
+        first_seconds=timed.durations[0] if timed.durations else dt,
+        first_score=first_score,
+    )
+
+
+def without_repair(r: CaseResult, mode: str) -> CaseResult:
+    """Ergebnis ohne Reparaturschleife = erster Versuch desselben Laufs (identischer Aufruf)."""
+    return CaseResult(
+        case_id=r.case_id, run=r.run, first_try_valid=r.first_try_valid, final_valid=r.first_try_valid,
+        attempts=1 if r.attempts else 0, seconds=r.first_seconds, first_errors=r.first_errors,
+        score=r.first_score, exception=r.exception, mode=mode, first_seconds=r.first_seconds,
+        first_score=r.first_score,
     )
 
 
@@ -188,6 +226,7 @@ def summarize(results: list[CaseResult]) -> dict:
         "decisions_accuracy": mean(s["decisions_ok"] for s in scored),
         "parallel_accuracy": mean(s["parallel_ok"] for s in scored),
         "structure_total": mean(s["total"] for s in scored),
+        "scored": len(scored),
         "avg_seconds": mean(r.seconds for r in results),
         "api_errors": sum(1 for r in results if r.exception),
         "error_categories": dict(cats.most_common()),
@@ -236,4 +275,48 @@ def markdown_report(results: list[CaseResult], summary: dict, model_name: str, d
     if summary["error_categories"]:
         lines += ["", "Fehlerarten im ersten Versuch: " + ", ".join(
             f"{k} ({v})" for k, v in summary["error_categories"].items())]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- Ablation
+
+# Varianten: (structured output?, Reparaturschleife?)
+ABLATION_MODES = {
+    "schema+repair": ("Structured Output + Reparatur (Standard)", True, True),
+    "schema": ("Structured Output, ohne Reparatur", True, False),
+    "prompt+repair": ("Nur Prompt (Schema als Text) + Reparatur", False, True),
+    "prompt": ("Nur Prompt, ohne Reparatur", False, False),
+}
+
+
+def ablation_report(summaries: dict[str, dict], model_name: str, date: str, runs: int, cases: int) -> str:
+    lines = [
+        f"**Modell:** `{model_name}` · **Datum:** {date} · **Fälle:** {cases} · **Läufe je Fall:** {runs}",
+        "",
+        "| Variante | First-Try valide | Valide am Ende | Ø Generierungen | Struktur gesamt¹ | Ø Laufzeit | Häufigste Fehlerart |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for key, (label, _, _) in ABLATION_MODES.items():
+        if key not in summaries:
+            continue
+        s = summaries[key]
+        top = next(iter(s["error_categories"].items()), None)
+        lines.append(
+            f"| {label} | {_pct(s['first_try_validity'])} | **{_pct(s['final_validity'])}** | "
+            f"{s['avg_attempts']:.2f} | {_pct(s['structure_total']) if s.get('scored') else '–'} | {s['avg_seconds']:.1f} s | "
+            f"{f'{top[0]} ({top[1]})' if top else '–'} |"
+        )
+    lines += ["", "¹ Strukturgenauigkeit über die gültigen Endergebnisse der jeweiligen Variante."]
+    notes = []
+    if "schema" in summaries and "prompt" in summaries:
+        a, b = summaries["schema"]["final_validity"], summaries["prompt"]["final_validity"]
+        notes.append(f"Effekt Structured Output (ohne Reparatur): {_pct(b)} → {_pct(a)} gültige Modelle.")
+    if "prompt" in summaries and "prompt+repair" in summaries:
+        a, b = summaries["prompt+repair"]["final_validity"], summaries["prompt"]["final_validity"]
+        notes.append(f"Effekt der Reparaturschleife bei reinem Prompting: {_pct(b)} → {_pct(a)}.")
+    if "schema" in summaries and "schema+repair" in summaries:
+        a, b = summaries["schema+repair"]["final_validity"], summaries["schema"]["final_validity"]
+        notes.append(f"Effekt der Reparaturschleife mit Structured Output: {_pct(b)} → {_pct(a)}.")
+    if notes:
+        lines += [""] + [f"- {n}" for n in notes]
     return "\n".join(lines)

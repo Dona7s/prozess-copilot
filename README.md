@@ -102,6 +102,27 @@ Rohdaten und Berichte landen in `eval/results/`, die Tabelle unten wird mit `--u
 *Noch nicht ausgeführt.* Ergebnisse erscheinen hier nach `python eval/run_eval.py --update-readme`.
 <!-- EVAL:END -->
 
+### Ablation: Was bringen Structured Output und Reparaturschleife?
+
+Um den Beitrag der beiden Mechanismen zu isolieren, wird derselbe Korpus in vier Varianten ausgewertet:
+
+| Variante | Schema-Vorgabe | Reparaturschleife |
+|---|---|---|
+| Structured Output + Reparatur (Standard) | `response_json_schema` (vom Modell beim Dekodieren eingehalten) | ja |
+| Structured Output, ohne Reparatur | `response_json_schema` | nein |
+| Nur Prompt + Reparatur | JSON-Schema nur als Text im System-Prompt, freie Antwort | ja |
+| Nur Prompt, ohne Reparatur | JSON-Schema nur als Text im System-Prompt, freie Antwort | nein |
+
+Bei reinem Prompting werden Code-Fences und Begleittext tolerant entfernt (`extract_json_text`), damit die Baseline nicht an Formalitäten scheitert. Die Varianten ohne Reparatur entsprechen dem ersten Versuch der Läufe mit Reparatur (identischer Aufruf). Das halbiert die API-Kosten, ohne das Ergebnis zu verändern.
+
+```bash
+python eval/run_eval.py --ablation --runs 3 --update-readme
+```
+
+<!-- ABLATION:START -->
+*Noch nicht ausgeführt.* Ergebnisse erscheinen hier nach `python eval/run_eval.py --ablation --update-readme`.
+<!-- ABLATION:END -->
+
 ## Tests
 
 ```bash
@@ -146,4 +167,4 @@ Python · Google Gemini API (`google-genai`) · Pydantic · Streamlit · bpmn-js
 
 - Weitere BPMN-Elemente (Zwischenereignisse, Nachrichtenflüsse, Subprozesse)
 - Import bestehender `.bpmn`-Dateien zur Analyse
-- Vergleich mehrerer Modelle und Prompt-Varianten in der Evaluation
+- Vergleich mehrerer Modelle (z. B. Flash vs. Pro) in der Evaluation

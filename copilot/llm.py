@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ValidationError
@@ -100,8 +101,23 @@ class ExtractionResult:
         return self.model is not None and not self.errors
 
 
+FREEFORM_INSTRUCTION = """
+
+Antworte ausschließlich mit einem JSON-Objekt (ohne Erklärtext), das genau diesem JSON-Schema entspricht:
+{schema}"""
+
+
 class GeminiClient:
-    def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL, temperature: float = 0.2):
+    """Gemini-Zugriff.
+
+    structured=True (Standard): Structured Output – das JSON-Schema wird als response_json_schema
+    übergeben und vom Modell beim Dekodieren eingehalten.
+    structured=False: nur Prompting – das Schema steht als Text im System-Prompt, die Antwort ist
+    freier Text (Baseline für die Ablationsstudie).
+    """
+
+    def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL, temperature: float = 0.2,
+                 structured: bool = True):
         from google import genai  # später Import: Bibliothek nur bei Bedarf laden
 
         key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -110,23 +126,55 @@ class GeminiClient:
         self._client = genai.Client(api_key=key)
         self.model = model
         self.temperature = temperature
+        self.structured = structured
 
     def generate_json(self, system: str, prompt: str, schema: type[BaseModel]) -> str:
         from google.genai import types
 
-        resp = self._client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
+        if self.structured:
+            config = types.GenerateContentConfig(
                 system_instruction=system,
                 temperature=self.temperature,
                 response_mime_type="application/json",
                 response_json_schema=schema.model_json_schema(),
-            ),
-        )
+            )
+        else:
+            schema_text = json.dumps(schema.model_json_schema(), ensure_ascii=False, indent=1)
+            config = types.GenerateContentConfig(
+                system_instruction=system + FREEFORM_INSTRUCTION.format(schema=schema_text),
+                temperature=self.temperature,
+            )
+        resp = self._client.models.generate_content(model=self.model, contents=prompt, config=config)
         if not resp.text:
             raise LLMError("Das Modell hat eine leere Antwort geliefert.")
         return resp.text
+
+
+def extract_json_text(raw: str) -> str:
+    """JSON aus einer freien Antwort lösen (Code-Fences, Text davor/danach).
+
+    Bei Structured Output ist das ein No-op; bei reinem Prompting antworten Modelle oft mit
+    ```json … ``` oder einem einleitenden Satz.
+    """
+    text = raw.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+    if fence:
+        text = fence.group(1).strip()
+    if not text.startswith("{"):
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            text = text[start:end + 1]
+    return text
+
+
+def _schema_errors(e: ValidationError) -> list[str]:
+    out = []
+    for err in e.errors():
+        if err.get("type") == "json_invalid":
+            out.append(f"Antwort ist kein gültiges JSON: {err['msg']}")
+        else:
+            out.append(f"JSON entspricht nicht dem Schema: {err['loc']}: {err['msg']}")
+    return out
 
 
 def _generate_validated(client, system: str, prompt: str, task: str, schema: type[BaseModel],
@@ -143,12 +191,12 @@ def _generate_validated(client, system: str, prompt: str, task: str, schema: typ
     for _ in range(max_repairs + 1):
         raw = client.generate_json(system, prompt, schema)
         try:
-            parsed = schema.model_validate_json(raw)
+            parsed = schema.model_validate_json(extract_json_text(raw))
             model = get_process(parsed)
             errors = validate(model)
         except ValidationError as e:
             parsed, model = None, None
-            errors = [f"JSON entspricht nicht dem Schema: {err['loc']}: {err['msg']}" for err in e.errors()]
+            errors = _schema_errors(e)
         attempts.append({"json": raw, "errors": errors})
         if model is not None and not errors:
             break
