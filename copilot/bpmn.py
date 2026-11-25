@@ -10,8 +10,9 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from dataclasses import dataclass
 
-from .schema import GATEWAY_TYPES, NodeType, ProcessModel
+from .schema import GATEWAY_TYPES, Flow, Node, NodeType, ProcessModel
 
 NS = {
     "bpmn": "http://www.omg.org/spec/BPMN/20100524/MODEL",
@@ -187,11 +188,28 @@ def to_bpmn_xml(model: ProcessModel) -> str:
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(defs, encoding="unicode")
 
 
-def _add_diagram(defs: ET.Element, model: ProcessModel, sid) -> None:
+@dataclass
+class Geometry:
+    """Berechnetes Diagramm-Layout in Pixeln – Grundlage für BPMNDI und den PDF-Bericht."""
+
+    pool: tuple[float, float, float, float]  # x, y, w, h
+    lanes: list[tuple[str, str, tuple[float, float, float, float]]]  # id, name, (x, y, w, h)
+    nodes: list[tuple[Node, tuple[float, float, float, float], tuple[float, float, float, float] | None]]
+    edges: list[tuple[Flow, list[tuple[float, float]], tuple[float, float, float, float] | None]]
+
+    @property
+    def width(self) -> float:
+        return self.pool[0] + self.pool[2] + POOL_X
+
+    @property
+    def height(self) -> float:
+        return self.pool[1] + self.pool[3] + POOL_Y
+
+
+def layout_geometry(model: ProcessModel) -> Geometry:
     pos = compute_layout(model)
     max_col = max((c for c, _ in pos.values()), default=0)
 
-    # Lane-Höhen
     rows_per_lane = defaultdict(lambda: 1)
     for n in model.nodes:
         rows_per_lane[n.lane] = max(rows_per_lane[n.lane], pos[n.id][1] + 1)
@@ -199,60 +217,80 @@ def _add_diagram(defs: ET.Element, model: ProcessModel, sid) -> None:
     lane_x = POOL_X + POOL_LABEL_W
     lane_w = LANE_LABEL_W + LEFT_PAD + (max_col + 1) * COL_W
     lane_y = {}
+    lanes = []
     y = POOL_Y
     for lane in model.lanes:
         lane_y[lane.id] = y
+        lanes.append((lane.id, lane.name, (lane_x, y, lane_w, rows_per_lane[lane.id] * ROW_H)))
         y += rows_per_lane[lane.id] * ROW_H
-    pool_h = y - POOL_Y
-
-    diagram = ET.SubElement(defs, _q("bpmndi", "BPMNDiagram"), {"id": "BPMNDiagram_1"})
-    plane = ET.SubElement(diagram, _q("bpmndi", "BPMNPlane"), {"id": "BPMNPlane_1", "bpmnElement": "Collaboration_1"})
-
-    def shape(elem_id: str, x: float, y: float, w: float, h: float, extra: dict | None = None) -> None:
-        attrs = {"id": f"{elem_id}_di", "bpmnElement": elem_id}
-        attrs.update(extra or {})
-        s = ET.SubElement(plane, _q("bpmndi", "BPMNShape"), attrs)
-        ET.SubElement(s, _q("dc", "Bounds"), {"x": _n(x), "y": _n(y), "width": _n(w), "height": _n(h)})
-
-    shape("Participant_1", POOL_X, POOL_Y, POOL_LABEL_W + lane_w, pool_h, {"isHorizontal": "true"})
-    for lane in model.lanes:
-        shape(sid(lane.id), lane_x, lane_y[lane.id], lane_w, rows_per_lane[lane.id] * ROW_H, {"isHorizontal": "true"})
+    pool = (POOL_X, POOL_Y, POOL_LABEL_W + lane_w, y - POOL_Y)
 
     def col_x(c: int) -> float:
         return lane_x + LANE_LABEL_W + LEFT_PAD + c * COL_W
 
     box = {}
+    nodes = []
     obstacles: list[tuple[str, tuple[float, float, float, float]]] = []
     row_bottom = {}
     for n in model.nodes:
         c, r = pos[n.id]
         w, h = _size(n.type)
         cx = col_x(c)
-        cy = lane_y[n.lane] + r * ROW_H + ROW_H / 2
+        cy = lane_y.get(n.lane, POOL_Y) + r * ROW_H + ROW_H / 2
         box[n.id] = (cx, cy, w, h)
         row_bottom[n.id] = cy + ROW_H / 2
         obstacles.append((n.id, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)))
-        extra = {"isMarkerVisible": "true"} if n.type == NodeType.exclusive_gateway else None
-        shape(sid(n.id), cx - w / 2, cy - h / 2, w, h, extra)
+        label = None
         if n.type in GATEWAY_TYPES and n.name:
             # Gateway-Beschriftung oberhalb; ausgehende Flüsse verlassen das Gateway seitlich
-            lx, ly = cx - 50, cy - h / 2 - 32
-            lab = ET.SubElement(plane[-1], _q("bpmndi", "BPMNLabel"))
-            ET.SubElement(lab, _q("dc", "Bounds"), {"x": _n(lx), "y": _n(ly), "width": "100", "height": "27"})
-            obstacles.append((n.id + "#label", (lx, ly, lx + 100, ly + 27)))
+            label = (cx - 50, cy - h / 2 - 32, 100, 27)
+            obstacles.append((n.id + "#label", (label[0], label[1], label[0] + 100, label[1] + 27)))
+        nodes.append((n, (cx - w / 2, cy - h / 2, w, h), label))
 
     router = _Router(obstacles)
+    edges = []
     for f in model.flows:
         if f.source not in box or f.target not in box:
             continue
         pts = router.route(f, box, pos, col_x, row_bottom)
+        label = None
+        if f.label:
+            lx, ly = _label_pos(pts)
+            label = (lx, ly, 30, 14)
+        edges.append((f, pts, label))
+    return Geometry(pool=pool, lanes=lanes, nodes=nodes, edges=edges)
+
+
+def _add_diagram(defs: ET.Element, model: ProcessModel, sid) -> None:
+    geo = layout_geometry(model)
+    diagram = ET.SubElement(defs, _q("bpmndi", "BPMNDiagram"), {"id": "BPMNDiagram_1"})
+    plane = ET.SubElement(diagram, _q("bpmndi", "BPMNPlane"), {"id": "BPMNPlane_1", "bpmnElement": "Collaboration_1"})
+
+    def bounds(parent: ET.Element, rect) -> None:
+        x, y, w, h = rect
+        ET.SubElement(parent, _q("dc", "Bounds"), {"x": _n(x), "y": _n(y), "width": _n(w), "height": _n(h)})
+
+    def shape(elem_id: str, rect, extra: dict | None = None) -> ET.Element:
+        attrs = {"id": f"{elem_id}_di", "bpmnElement": elem_id}
+        attrs.update(extra or {})
+        s = ET.SubElement(plane, _q("bpmndi", "BPMNShape"), attrs)
+        bounds(s, rect)
+        return s
+
+    shape("Participant_1", geo.pool, {"isHorizontal": "true"})
+    for lane_id, _, rect in geo.lanes:
+        shape(sid(lane_id), rect, {"isHorizontal": "true"})
+    for n, rect, label in geo.nodes:
+        extra = {"isMarkerVisible": "true"} if n.type == NodeType.exclusive_gateway else None
+        s = shape(sid(n.id), rect, extra)
+        if label:
+            bounds(ET.SubElement(s, _q("bpmndi", "BPMNLabel")), label)
+    for f, pts, label in geo.edges:
         e = ET.SubElement(plane, _q("bpmndi", "BPMNEdge"), {"id": f"{sid(f.id)}_di", "bpmnElement": sid(f.id)})
         for px, py in pts:
             ET.SubElement(e, _q("di", "waypoint"), {"x": _n(px), "y": _n(py)})
-        if f.label:
-            lx, ly = _label_pos(pts)
-            lab = ET.SubElement(e, _q("bpmndi", "BPMNLabel"))
-            ET.SubElement(lab, _q("dc", "Bounds"), {"x": _n(lx), "y": _n(ly), "width": "30", "height": "14"})
+        if label:
+            bounds(ET.SubElement(e, _q("bpmndi", "BPMNLabel")), label)
 
 
 def _label_pos(pts) -> tuple[float, float]:

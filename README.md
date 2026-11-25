@@ -39,6 +39,7 @@ flowchart LR
 | 6 | **Analyse** – Engpässe, unnötige Übergaben, Wartezeiten sowie Automatisierungspotenziale (RPA / API / KI) | Zweiter Gemini-Aufruf, ebenfalls schema-gebunden | `analyze_process()` |
 | 6a | **Bearbeitung per Chat** – Diagramm mit Anweisungen in natürlicher Sprache ändern („Füge eine Freigabe durch die Buchhaltung hinzu“), inkl. Verlauf, Änderungsübersicht und Rückgängig | Gemini liefert das vollständige geänderte Modell, das dieselbe Validierung und Reparaturschleife durchläuft; Unterschiede berechnet Python | `edit_process()` |
 | 7 | **Soll-Prozess (To-Be)** – verbesserter Prozess auf Basis der Analyse, mit Änderungsübersicht; Ist und Soll in Tabs bzw. nebeneinander, neue Elemente hervorgehoben | Dritter Gemini-Aufruf mit derselben Validierung und Reparaturschleife; Kennzahlenvergleich in Python | `propose_to_be()`, `copilot/compare.py` |
+| 8 | **PDF-Bericht** – Ist-Diagramm, Analyse, Soll-Prozess, Änderungen und Kennzahlen in einem Dokument ([Beispiel](docs/beispielbericht.pdf)) | reportlab; Diagramme als Vektorgrafik direkt aus dem Layout gezeichnet, sehr breite Prozesse werden in lesbare Abschnitte geteilt | `copilot/report.py` |
 
 ## Designentscheidungen
 
@@ -49,6 +50,7 @@ flowchart LR
 - **Fakten statt LLM-Behauptungen beim Vergleich.** Die Änderungsübersicht formuliert das Modell, die Kennzahlen (manuelle vs. automatisierte Aufgaben, manuelle Übergaben zwischen Rollen, neue und entfallene Elemente) berechnet dagegen deterministischer Code aus beiden Modellen.
 - **Schutz vor Halluzinationen in der Analyse.** Verweise des Modells auf nicht existierende Elemente werden automatisch entfernt.
 - **Automatisches Layout und Routing.** Spalten ergeben sich aus dem längsten Pfad im Prozessgraphen, Schleifen werden per Tiefensuche erkannt und unten herum geführt. Zweige behalten die Zeile ihres Vorgängers. Sequenzflüsse werden orthogonal in den freien Kanälen zwischen den Spalten geführt: Für jeden Fluss werden mehrere Routen erzeugt und so bewertet, dass keine Linie durch ein Element läuft und keine zwei Flüsse deckungsgleich übereinanderliegen. Ein Test prüft das für mehrere Beispielprozesse.
+- **Ein Layout, zwei Ausgaben.** Die Diagrammgeometrie wird einmal berechnet und sowohl für BPMNDI (Camunda, Signavio, bpmn-js) als auch für den PDF-Bericht verwendet. Der Bericht braucht deshalb keinen Browser und keine Screenshots.
 - **Testbar ohne API.** Ein Demo-Client simuliert Gemini – inklusive einer fehlerhaften ersten Antwort, um die Reparaturschleife vorzuführen. Die Tests laufen dadurch offline und deterministisch.
 
 ## Schnellstart
@@ -122,7 +124,8 @@ prozess-copilot/
 │   ├── evaluation.py       # Bewertung: Validität, Reparaturen, Strukturgenauigkeit
 │   ├── viewer.py           # bpmn-js-Einbettung mit Zoom und Vollbild
 │   ├── demo.py             # Offline-Demo-Client und Beispieldaten
-│   └── documents.py        # Textextraktion aus PDF, Word und Text
+│   ├── documents.py        # Textextraktion aus PDF, Word und Text
+│   └── report.py           # PDF-Bericht mit Vektordiagrammen
 ├── eval/
 │   ├── dataset.json        # Testkorpus mit erwarteter Struktur
 │   ├── run_eval.py         # Evaluationsskript (CLI)
@@ -137,7 +140,7 @@ prozess-copilot/
 
 ## Technologien
 
-Python · Google Gemini API (`google-genai`) · Pydantic · Streamlit · bpmn-js · pypdf · python-docx · BPMN 2.0 · pytest · GitHub Actions
+Python · Google Gemini API (`google-genai`) · Pydantic · Streamlit · bpmn-js · pypdf · python-docx · reportlab · BPMN 2.0 · pytest · GitHub Actions
 
 ## Ausblick
 

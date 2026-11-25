@@ -12,6 +12,7 @@ import streamlit as st
 from copilot.bpmn import safe_id, to_bpmn_xml
 from copilot.demo import EXAMPLE_TEXT, DemoClient
 from copilot.documents import SUPPORTED, DocumentError, extract_text
+from copilot.report import build_report
 from copilot.compare import compare
 from copilot.llm import (
     DEFAULT_MODEL,
@@ -169,6 +170,28 @@ st.subheader(f"Ist-Prozess: {model.name}")
 diagram(model, marks, "ist", diagram_h)
 legend = "🟧 Schwachstelle · 🟩 Automatisierungspotenzial · 🟪 beides · " if analysis else ""
 st.caption(legend + "Die `.bpmn`-Datei lässt sich in Camunda Modeler, Signavio oder bpmn.io öffnen.")
+
+# ---------------------------------------------------------------- PDF-Bericht
+_tobe = st.session_state.get("tobe")
+_tobe_model = _tobe.model if _tobe and _tobe.model is not None else None
+_parts = ["Ist-Diagramm"] + (["Analyse"] if analysis else []) + (["Soll-Prozess mit Kennzahlen"] if _tobe_model else [])
+try:
+    _pdf = build_report(
+        model,
+        description=st.session_state.get("text", ""),
+        analysis=analysis,
+        tobe=_tobe_model,
+        changes=_tobe.changes if _tobe_model else None,
+        comparison=compare(model, _tobe_model) if _tobe_model else None,
+        llm_model=getattr(st.session_state.get("client"), "model", ""),
+        attempts=len(result.attempts) if not st.session_state.get("edits") else None,
+    )
+    r1, r2 = st.columns([1, 2])
+    r1.download_button("📄 PDF-Bericht herunterladen", _pdf, file_name=f"{safe_id(model.name).lower() or 'prozess'}_bericht.pdf",
+                       mime="application/pdf", width="stretch")
+    r2.caption("Enthält: " + ", ".join(_parts) + ". Nach Analyse bzw. Soll-Prozess wird der Bericht automatisch ergänzt.")
+except Exception as e:  # Bericht darf die App nie blockieren
+    st.warning(f"PDF-Bericht konnte nicht erstellt werden: {e}")
 
 # ---------------------------------------------------------------- Bearbeitung per Chat
 with st.expander("✏️ Diagramm per Chat bearbeiten", expanded=bool(st.session_state.get("edits"))):
