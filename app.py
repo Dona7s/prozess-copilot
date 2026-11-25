@@ -11,6 +11,7 @@ import streamlit as st
 
 from copilot.bpmn import safe_id, to_bpmn_xml
 from copilot.demo import EXAMPLE_TEXT, DemoClient
+from copilot.documents import SUPPORTED, DocumentError, extract_text
 from copilot.compare import compare
 from copilot.llm import DEFAULT_MODEL, GeminiClient, LLMError, analyze_process, extract_process, propose_to_be
 from copilot.schema import ProcessModel
@@ -62,11 +63,32 @@ st.title("🧭 Prozess Copilot")
 st.write("Beschreiben Sie einen Prozess in eigenen Worten. Der Copilot erstellt daraus ein BPMN-2.0-Diagramm "
          "und zeigt Schwachstellen sowie Automatisierungspotenziale auf.")
 
+with st.expander("📄 Prozessbeschreibung aus Datei laden (PDF, Word, Text)"):
+    upload = st.file_uploader("Datei auswählen", type=list(SUPPORTED), label_visibility="collapsed")
+    if upload is not None and st.session_state.get("upload_id") != upload.file_id:
+        st.session_state["upload_id"] = upload.file_id
+        try:
+            doc = extract_text(upload.name, upload.getvalue())
+            st.session_state["text"] = doc.text
+            st.session_state["upload_info"] = (
+                f"„{upload.name}“ übernommen: {len(doc.text):,} Zeichen".replace(",", ".")
+                + (f", {doc.pages} Seite(n)" if doc.pages else "")
+                + "".join(f" · {w}" for w in doc.warnings)
+            )
+            st.rerun()
+        except DocumentError as e:
+            st.error(str(e))
+    if st.session_state.get("upload_info"):
+        st.caption(st.session_state["upload_info"] + ". Der Text kann unten noch bearbeitet werden.")
+
 text = st.text_area("Prozessbeschreibung", value=st.session_state.get("text", EXAMPLE_TEXT), height=130)
+if len(text) > 4000:
+    st.caption(f"{len(text):,} Zeichen. Bei langen Dokumenten am besten nur den relevanten Prozessabschnitt behalten.".replace(",", "."))
 col_a, col_b = st.columns([1, 5])
 run = col_a.button("Diagramm erstellen", type="primary")
 if col_b.button("Beispiel einfügen"):
     st.session_state["text"] = EXAMPLE_TEXT
+    st.session_state.pop("upload_info", None)
     st.rerun()
 
 if run:

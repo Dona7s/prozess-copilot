@@ -31,7 +31,7 @@ flowchart LR
 
 | # | Schritt | Umsetzung | Code |
 |---|---------|-----------|------|
-| 1 | **Eingabe** – Prozess in eigenen Worten beschreiben | Streamlit | `app.py` |
+| 1 | **Eingabe** – Prozess in eigenen Worten beschreiben oder als PDF-, Word- bzw. Textdatei hochladen (inkl. Tabellen in Word) | Streamlit, pypdf, python-docx | `app.py`, `copilot/documents.py` |
 | 2 | **Text → JSON** – Rollen (Lanes), Aufgaben, Gateways und Sequenzflüsse extrahieren | Gemini mit JSON-Schema (Structured Output), Schema als Pydantic-Modell | `copilot/llm.py`, `copilot/schema.py` |
 | 3 | **Validierung & Reparaturschleife** – Start/Ende vorhanden? Unverbundene Aufgaben? Erreicht jeder Pfad ein Ende? Bedingungen an XOR-Gateways? Bei Fehlern erhält das Modell die Fehlerliste und korrigiert (Standard: bis zu 3 Versuche) | Python (Graphanalyse) | `copilot/validate.py` |
 | 4 | **JSON → BPMN 2.0 XML** inkl. automatischem Layout (BPMNDI) | Deterministischer Python-Code, **kein LLM** | `copilot/bpmn.py` |
@@ -125,14 +125,16 @@ prozess-copilot/
 │   ├── run_eval.py         # Evaluationsskript (CLI)
 │   └── results/            # Ergebnisse der Läufe
 ├── examples/
-│   └── bestellabwicklung.bpmn
+│   ├── bestellabwicklung.bpmn
+│   ├── rechnungspruefung.pdf   # Beispiel für den Datei-Upload
+│   └── onboarding.docx         # Beispiel für den Datei-Upload
 └── tests/
     └── test_pipeline.py
 ```
 
 ## Technologien
 
-Python · Google Gemini API (`google-genai`) · Pydantic · Streamlit · bpmn-js · BPMN 2.0 · pytest · GitHub Actions
+Python · Google Gemini API (`google-genai`) · Pydantic · Streamlit · bpmn-js · pypdf · python-docx · BPMN 2.0 · pytest · GitHub Actions
 
 ## Ausblick
 
