@@ -6,8 +6,9 @@ Fachabteilungen beschreiben Abläufe meist in Fließtext. Prozess Copilot übers
 
 ![Generiertes BPMN-Diagramm](docs/diagramm.png)
 
-*Eingabe:* „Der Kunde gibt eine Bestellung auf. Der Vertrieb prüft den Lagerbestand. Ist die Ware vorrätig, versendet das Lager sie, andernfalls wird der Kunde benachrichtigt.“
-*Farbig markiert:* Schwachstellen (orange), Automatisierungspotenziale (grün), beides (violett).
+*Eingabe:* „Der Mitarbeiter stellt einen Urlaubsantrag im Portal. Der Teamleiter prüft den Antrag. Wenn er genehmigt wird, trägt die Personalabteilung den Urlaub ins System ein und der Mitarbeiter erhält eine Bestätigung. Wenn er abgelehnt wird, bekommt der Mitarbeiter eine Begründung per E-Mail.“
+
+In der Anwendung werden nach der Analyse zusätzlich Schwachstellen (orange), Automatisierungspotenziale (grün) und beides (violett) farbig markiert.
 
 ---
 
@@ -38,7 +39,7 @@ flowchart LR
 - **Das LLM erzeugt nur Struktur, nie XML.** BPMN-XML ist umfangreich und fehleranfällig. Das Modell liefert ein schlankes, schema-gebundenes JSON; die Übersetzung in BPMN übernimmt deterministischer Code. Das Ergebnis ist dadurch immer syntaktisch gültig und reproduzierbar.
 - **Zuverlässige Übergabe durch Structured Output und Validierung.** Das Pydantic-Schema wird als JSON-Schema an Gemini übergeben und die Antwort mit demselben Schema geprüft. Zusätzlich prüft eine Graphanalyse die *fachliche* Korrektheit des Prozesses. Die Fehlermeldungen sind so formuliert, dass das Modell sie direkt zur Selbstkorrektur nutzen kann.
 - **Schutz vor Halluzinationen in der Analyse.** Verweise des Modells auf nicht existierende Elemente werden automatisch entfernt.
-- **Automatisches Layout.** Spalten ergeben sich aus dem längsten Pfad im Prozessgraphen, Schleifen werden per Tiefensuche erkannt und unten herum geführt, Zeilen werden je Lane verteilt.
+- **Automatisches Layout und Routing.** Spalten ergeben sich aus dem längsten Pfad im Prozessgraphen, Schleifen werden per Tiefensuche erkannt und unten herum geführt. Zweige behalten die Zeile ihres Vorgängers. Sequenzflüsse werden orthogonal in den freien Kanälen zwischen den Spalten geführt: Für jeden Fluss werden mehrere Routen erzeugt und so bewertet, dass keine Linie durch ein Element läuft und keine zwei Flüsse deckungsgleich übereinanderliegen. Ein Test prüft das für mehrere Beispielprozesse.
 - **Testbar ohne API.** Ein Demo-Client simuliert Gemini – inklusive einer fehlerhaften ersten Antwort, um die Reparaturschleife vorzuführen. Die Tests laufen dadurch offline und deterministisch.
 
 ## Schnellstart

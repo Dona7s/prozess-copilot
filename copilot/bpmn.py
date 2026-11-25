@@ -33,7 +33,7 @@ SIZE = {
     "gateway": (50, 50),
     "task": (110, 80),
 }
-COL_W = 170  # Abstand zwischen Spalten
+COL_W = 200  # Abstand zwischen Spalten
 ROW_H = 130  # Zeilenhöhe innerhalb einer Lane
 POOL_X, POOL_Y = 40, 40
 POOL_LABEL_W = 30
@@ -105,14 +105,22 @@ def compute_layout(model: ProcessModel) -> dict[str, tuple[int, int]]:
             if indeg[v] == 0:
                 queue.append(v)
 
-    # Zeilen je Lane + Spalte verteilen
+    # Zeilen je Lane + Spalte verteilen: ein Element übernimmt nach Möglichkeit
+    # die Zeile seines Vorgängers in derselben Lane, damit Zweige gerade bleiben.
     lane_of = {n.id: n.lane for n in model.nodes}
-    used: dict[tuple[str, int], int] = defaultdict(int)
-    pos = {}
+    preds = defaultdict(list)
+    for f in model.flows:
+        preds[f.target].append(f.source)
+    taken: dict[tuple[str, int], set[int]] = defaultdict(set)
+    pos: dict[str, tuple[int, int]] = {}
     for i in sorted(node_ids, key=lambda x: (col[x], order.index(x))):
         key = (lane_of[i], col[i])
-        pos[i] = (col[i], used[key])
-        used[key] += 1
+        pref = next((pos[p][1] for p in preds[i] if p in pos and lane_of[p] == lane_of[i]), 0)
+        row = pref
+        while row in taken[key]:
+            row += 1
+        taken[key].add(row)
+        pos[i] = (col[i], row)
     return pos
 
 
@@ -210,50 +218,154 @@ def _add_diagram(defs: ET.Element, model: ProcessModel, sid) -> None:
     for lane in model.lanes:
         shape(sid(lane.id), lane_x, lane_y[lane.id], lane_w, rows_per_lane[lane.id] * ROW_H, {"isHorizontal": "true"})
 
+    def col_x(c: int) -> float:
+        return lane_x + LANE_LABEL_W + LEFT_PAD + c * COL_W
+
     box = {}
+    obstacles: list[tuple[str, tuple[float, float, float, float]]] = []
+    row_bottom = {}
     for n in model.nodes:
         c, r = pos[n.id]
         w, h = _size(n.type)
-        cx = lane_x + LANE_LABEL_W + LEFT_PAD + c * COL_W
+        cx = col_x(c)
         cy = lane_y[n.lane] + r * ROW_H + ROW_H / 2
         box[n.id] = (cx, cy, w, h)
+        row_bottom[n.id] = cy + ROW_H / 2
+        obstacles.append((n.id, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)))
         extra = {"isMarkerVisible": "true"} if n.type == NodeType.exclusive_gateway else None
         shape(sid(n.id), cx - w / 2, cy - h / 2, w, h, extra)
         if n.type in GATEWAY_TYPES and n.name:
-            # Gateway-Beschriftung oberhalb, damit sie nicht mit dem nach unten gehenden Fluss kollidiert
+            # Gateway-Beschriftung oberhalb; ausgehende Flüsse verlassen das Gateway seitlich
+            lx, ly = cx - 50, cy - h / 2 - 32
             lab = ET.SubElement(plane[-1], _q("bpmndi", "BPMNLabel"))
-            ET.SubElement(lab, _q("dc", "Bounds"), {"x": _n(cx - 50), "y": _n(cy - h / 2 - 30), "width": "100", "height": "27"})
+            ET.SubElement(lab, _q("dc", "Bounds"), {"x": _n(lx), "y": _n(ly), "width": "100", "height": "27"})
+            obstacles.append((n.id + "#label", (lx, ly, lx + 100, ly + 27)))
 
+    router = _Router(obstacles)
     for f in model.flows:
         if f.source not in box or f.target not in box:
             continue
-        pts = _route(box[f.source], box[f.target])
+        pts = router.route(f, box, pos, col_x, row_bottom)
         e = ET.SubElement(plane, _q("bpmndi", "BPMNEdge"), {"id": f"{sid(f.id)}_di", "bpmnElement": sid(f.id)})
         for px, py in pts:
             ET.SubElement(e, _q("di", "waypoint"), {"x": _n(px), "y": _n(py)})
         if f.label:
-            if len(pts) == 3:  # vertikal-horizontal: nach dem Knick
-                lx, ly = pts[1][0] + 10, pts[1][1] - 20
-            else:
-                lx, ly = pts[0][0] + 8, pts[0][1] - 20
+            lx, ly = _label_pos(pts)
             lab = ET.SubElement(e, _q("bpmndi", "BPMNLabel"))
-            ET.SubElement(lab, _q("dc", "Bounds"), {"x": _n(lx), "y": _n(ly), "width": "60", "height": "14"})
+            ET.SubElement(lab, _q("dc", "Bounds"), {"x": _n(lx), "y": _n(ly), "width": "30", "height": "14"})
 
 
-def _route(src, tgt) -> list[tuple[float, float]]:
-    sx, sy, sw, sh = src
-    tx, ty, tw, th = tgt
-    if tx > sx:  # vorwärts
-        a = (sx + sw / 2, sy)
-        b = (tx - tw / 2, ty)
-        if abs(sy - ty) < 1:
-            return [a, b]
-        # erst vertikal, dann horizontal (übersichtlicher bei Gateway-Zweigen)
-        a = (sx, sy + (sh / 2 if ty > sy else -sh / 2))
-        return [a, (sx, ty), b]
-    # rückwärts (Schleife): unten herum führen
-    bottom = max(sy + sh / 2, ty + th / 2) + 25
-    return [(sx, sy + sh / 2), (sx, bottom), (tx, bottom), (tx, ty + th / 2)]
+def _label_pos(pts) -> tuple[float, float]:
+    """Position der Bedingung (z. B. „Ja“/„Nein“) so, dass sie eindeutig an ihrem Zweig steht."""
+    (x1, y1), (x2, y2) = pts[-2], pts[-1]
+    if abs(y1 - y2) < 0.5:  # endet horizontal
+        if len(pts) >= 3:  # links neben dem letzten vertikalen Abschnitt, oberhalb der Einmündung
+            return x1 - 34, y2 - 18
+        return pts[0][0] + 6, pts[0][1] - 18  # gerade Linie: direkt hinter der Quelle
+    return pts[0][0] + 4, pts[0][1] + 4  # Rückwärtsfluss: neben dem Start
+
+
+Seg = tuple[tuple[float, float], tuple[float, float]]
+
+
+class _Router:
+    """Orthogonales Routing der Sequenzflüsse.
+
+    Vertikale Abschnitte verlaufen nur in den freien Kanälen zwischen den Spalten.
+    Für jeden Fluss werden mehrere Kandidaten erzeugt und bewertet: Kreuzen von
+    Elementen ist am teuersten, deckungsgleiche Abschnitte mit anderen Flüssen
+    (die man nicht mehr auseinanderhalten kann) ebenfalls, danach zählen Knicke.
+    """
+
+    CHANNEL_OFFSETS = (18, 30, 42, 54)
+
+    def __init__(self, obstacles):
+        self.obstacles = obstacles
+        self.done: list[tuple[str, str, list[Seg]]] = []
+
+    def route(self, f, box, pos, col_x, row_bottom) -> list[tuple[float, float]]:
+        sx, sy, sw, sh = box[f.source]
+        tx, ty, tw, th = box[f.target]
+        sc, tc = pos[f.source][0], pos[f.target][0]
+        a, b = (sx + sw / 2, sy), (tx - tw / 2, ty)
+        cands: list[list[tuple[float, float]]] = []
+        if tc > sc:  # vorwärts
+            if abs(sy - ty) < 1:
+                cands.append([a, b])
+            for gap in dict.fromkeys((tc, sc + 1)):  # Kanal vor dem Ziel / nach der Quelle
+                for off in self.CHANNEL_OFFSETS:
+                    x = col_x(gap) - SIZE["task"][0] / 2 - off
+                    cands.append([a, (x, sy), (x, ty), b])
+            # Umweg entlang des unteren Zeilenrands (wenn die direkte Linie blockiert ist)
+            for yd in (row_bottom[f.source] - 10, row_bottom[f.target] - 10):
+                for off in self.CHANNEL_OFFSETS[:2]:
+                    x1 = col_x(sc + 1) - SIZE["task"][0] / 2 - off
+                    x2 = col_x(tc) - SIZE["task"][0] / 2 - off
+                    cands.append([a, (x1, sy), (x1, yd), (x2, yd), (x2, ty), b])
+        else:  # rückwärts (Schleife): unten herum
+            yb = max(row_bottom[f.source], row_bottom[f.target]) - 10
+            for d in (0, -8, 8):
+                cands.append([(sx + d, sy + sh / 2), (sx + d, yb), (tx + d, yb), (tx + d, ty + th / 2)])
+                yb2 = yb - 6
+                cands.append([(sx + d, sy + sh / 2), (sx + d, yb2), (tx + d, yb2), (tx + d, ty + th / 2)])
+
+        best = min(cands, key=lambda pts: self._cost(pts, f))
+        best = _simplify(best)
+        self.done.append((f.source, f.target, _segments(best)))
+        return best
+
+    def _cost(self, pts, f) -> float:
+        segs = _segments(pts)
+        hits = 0
+        for oid, rect in self.obstacles:
+            if oid in (f.source, f.target):
+                continue
+            hits += sum(_seg_hits_rect(s, rect) for s in segs)
+        overlaps = 0
+        for src, tgt, other in self.done:
+            if src == f.source or tgt == f.target:
+                continue  # gemeinsamer Start/Ziel: Zusammenlaufen ist normal
+            overlaps += sum(_collinear_overlap(s, o) for s in segs for o in other)
+        return hits * 1000 + overlaps * 100 + len(segs)
+
+
+def _segments(pts) -> list[Seg]:
+    return [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+
+
+def _simplify(pts):
+    out = [pts[0]]
+    for p in pts[1:]:
+        if abs(p[0] - out[-1][0]) < 0.5 and abs(p[1] - out[-1][1]) < 0.5:
+            continue
+        out.append(p)
+    # kollineare Zwischenpunkte entfernen
+    res = [out[0]]
+    for i in range(1, len(out) - 1):
+        (x0, y0), (x1, y1), (x2, y2) = res[-1], out[i], out[i + 1]
+        if (abs(x0 - x1) < 0.5 and abs(x1 - x2) < 0.5) or (abs(y0 - y1) < 0.5 and abs(y1 - y2) < 0.5):
+            continue
+        res.append(out[i])
+    res.append(out[-1])
+    return res
+
+
+def _seg_hits_rect(seg: Seg, rect, pad: float = 3) -> bool:
+    (x1, y1), (x2, y2) = seg
+    rx1, ry1, rx2, ry2 = rect[0] - pad, rect[1] - pad, rect[2] + pad, rect[3] + pad
+    lo_x, hi_x = min(x1, x2), max(x1, x2)
+    lo_y, hi_y = min(y1, y2), max(y1, y2)
+    return lo_x < rx2 and hi_x > rx1 and lo_y < ry2 and hi_y > ry1
+
+
+def _collinear_overlap(s: Seg, o: Seg, tol: float = 4) -> bool:
+    (ax1, ay1), (ax2, ay2) = s
+    (bx1, by1), (bx2, by2) = o
+    if abs(ax1 - ax2) < 0.5 and abs(bx1 - bx2) < 0.5 and abs(ax1 - bx1) < tol:  # beide vertikal
+        return min(max(ay1, ay2), max(by1, by2)) - max(min(ay1, ay2), min(by1, by2)) > tol
+    if abs(ay1 - ay2) < 0.5 and abs(by1 - by2) < 0.5 and abs(ay1 - by1) < tol:  # beide horizontal
+        return min(max(ax1, ax2), max(bx1, bx2)) - max(min(ax1, ax2), min(bx1, bx2)) > tol
+    return False
 
 
 def _n(v: float) -> str:
