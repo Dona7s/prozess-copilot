@@ -6,6 +6,11 @@ import json
 BPMN_JS = "https://unpkg.com/bpmn-js@17.11.1/dist"
 
 
+def _js(value) -> str:
+    """JSON für die Einbettung in <script> – verhindert ein vorzeitiges </script>."""
+    return json.dumps(value).replace("</", "<\\/")
+
+
 def viewer_html(xml: str, highlight: dict[str, str] | None = None, height: int = 520) -> str:
     """highlight: {node_id: "weak" | "auto"} — Elemente farbig markieren."""
     return f"""<!doctype html>
@@ -22,8 +27,8 @@ def viewer_html(xml: str, highlight: dict[str, str] | None = None, height: int =
 </style></head>
 <body><div id="canvas"></div><div id="err"></div>
 <script>
-  const xml = {json.dumps(xml)};
-  const marks = {json.dumps(highlight or {})};
+  const xml = {_js(xml)};
+  const marks = {_js(highlight or {})};
   const viewer = new BpmnJS({{ container: '#canvas' }});
   viewer.importXML(xml).then(() => {{
     const canvas = viewer.get('canvas');

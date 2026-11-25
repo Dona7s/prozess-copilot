@@ -8,7 +8,6 @@ import json
 import os
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from copilot.bpmn import safe_id, to_bpmn_xml
 from copilot.demo import EXAMPLE_TEXT, DemoClient
@@ -30,6 +29,16 @@ with st.sidebar:
     max_repairs = st.slider("Reparaturversuche (max.)", 0, 5, 3)
     demo = st.toggle("Demo-Modus (ohne API)", value=not api_key)
     st.caption("Der Demo-Modus liefert eine vorbereitete Antwort für den Beispieltext.")
+
+
+def show_html(html: str, height: int) -> None:
+    """Eigenständige HTML-Seite einbetten (st.iframe ab neueren Streamlit-Versionen)."""
+    if hasattr(st, "iframe"):
+        st.iframe(html, height=height)
+    else:  # Fallback für ältere Streamlit-Versionen
+        import streamlit.components.v1 as components
+
+        components.html(html, height=height)
 
 
 def get_client():
@@ -105,7 +114,7 @@ if analysis:
         marks[sid] = (marks.get(sid, "") + " auto").strip()
 
 st.subheader(f"Diagramm: {model.name}")
-components.html(viewer_html(xml, marks), height=560)
+show_html(viewer_html(xml, marks), height=560)
 if analysis:
     st.caption("🟧 Schwachstelle · 🟩 Automatisierungspotenzial · 🟪 beides")
 
@@ -149,5 +158,5 @@ else:
             for a in analysis.automations
         ],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )

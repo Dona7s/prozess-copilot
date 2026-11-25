@@ -131,3 +131,11 @@ def test_analysis_drops_unknown_ids():
     a = analyze_process(Halluc(), _model())
     assert all(x.node_id != "nope" for x in a.automations)
     assert "nope" not in a.weaknesses[0].node_ids
+
+
+def test_viewer_escapes_script_end_tag():
+    from copilot.viewer import viewer_html
+
+    html = viewer_html("<x>a</script><b/></x>")
+    body = html.split("<script>", 2)[-1]
+    assert body.count("</script>") == 1  # nur das echte schließende Tag
