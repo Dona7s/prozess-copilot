@@ -176,3 +176,23 @@ def test_gemini_client_freeform_config(monkeypatch):
         else:
             assert cfg.response_json_schema is None and cfg.response_mime_type is None
             assert '"lanes"' in cfg.system_instruction
+
+
+def test_readme_from_saved_results(tmp_path, monkeypatch):
+    import sys
+
+    sys.path.insert(0, str(ROOT / "eval"))
+    import run_eval
+
+    readme = tmp_path / "README.md"
+    readme.write_text("x\n<!-- EVAL:START -->\nalt\n<!-- EVAL:END -->\ny\n<!-- ABLATION:START -->\nalt\n<!-- ABLATION:END -->\n",
+                      encoding="utf-8")
+    monkeypatch.setattr(run_eval, "ROOT", tmp_path)
+    out = tmp_path / "res"
+    ds = ["--dataset", str(ROOT / "eval" / "dataset.json"), "--cases", "bestellung", "--out", str(out)]
+    run_eval.main(["--demo", *ds])
+    run_eval.main(["--demo", "--ablation", *ds])
+    for f in sorted(out.glob("*.json")):
+        assert run_eval.main(["--readme-from", str(f)]) == 0
+    text = readme.read_text(encoding="utf-8")
+    assert "alt" not in text and "| bestellung |" in text and "Nur Prompt" in text

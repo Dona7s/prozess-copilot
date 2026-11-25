@@ -81,6 +81,21 @@ def _update_readme(section: str, md: str) -> None:
         print(f"Hinweis: Markierungen {start} … {end} fehlen im README.")
 
 
+def _readme_from(path: Path) -> int:
+    from copilot.evaluation import CaseResult
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("ablation"):
+        md = ablation_report(data["summaries"], data["model"], data["date"],
+                             max(r["run"] for r in data["results"]["schema+repair"]),
+                             len({r["case_id"] for r in data["results"]["schema+repair"]}))
+        _update_readme("ablation", md)
+    else:
+        results = [CaseResult(**r) for r in data["results"]]
+        _update_readme("eval", markdown_report(results, summarize(results), data["model"], data["date"]))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default=DEFAULT_MODEL)
@@ -94,7 +109,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="Structured Output vs. reines Prompting, jeweils mit und ohne Reparatur")
     ap.add_argument("--update-readme", action="store_true")
     ap.add_argument("--demo", action="store_true", help="DemoClient statt Gemini (Technik-Test)")
+    ap.add_argument("--readme-from", metavar="JSON",
+                    help="keine neuen Aufrufe: README-Tabelle aus einer gespeicherten Ergebnisdatei erzeugen")
     args = ap.parse_args(argv)
+
+    if args.readme_from:
+        return _readme_from(Path(args.readme_from))
 
     cases = json.loads(Path(args.dataset).read_text(encoding="utf-8"))["cases"]
     if args.cases:
